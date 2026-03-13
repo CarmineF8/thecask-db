@@ -1,0 +1,66 @@
+name: Weekly Bottles Update
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout thecask-db
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run update script
+        run: python update_bottles.py
+
+      - name: Read new total
+        id: count
+        run: |
+          TOTAL=$(cat bottle_count.txt)
+          echo "total=$TOTAL" >> $GITHUB_OUTPUT
+          FORMATTED=$(printf "%'d" $TOTAL)
+          echo "formatted=$FORMATTED" >> $GITHUB_OUTPUT
+
+      - name: Commit & push updated DB
+        run: |
+          git config user.name  "thecask-bot"
+          git config user.email "bot@thecaskforum.com"
+          git add bottles_db.js bottle_count.txt
+          git diff --cached --quiet || git commit -m "Weekly update — ${{ steps.count.outputs.total }} bottles"
+          git push
+
+      - name: Checkout deploy repo
+        uses: actions/checkout@v4
+        with:
+          repository: CarmineF8/thecask-deploy
+          token: ${{ secrets.DEPLOY_REPO_TOKEN }}
+          path: deploy
+
+      - name: Update bottle count in index.html
+        env:
+          NEW_COUNT: ${{ steps.count.outputs.formatted }}
+        run: |
+          cd deploy
+          sed -i -E "s|<div class=\"hstat-num\">[0-9,]+</div><div class=\"hstat-label\">Bottles</div>|<div class=\"hstat-num\">${NEW_COUNT}</div><div class=\"hstat-label\">Bottles</div>|g" index.html
+          sed -i -E "s|[0-9,]+ bottles catalogued|${NEW_COUNT} bottles catalogued|g" index.html
+          sed -i -E "s|[0-9,]+\+? bottles of whisky|${NEW_COUNT}+ bottles of whisky|g" index.html
+          sed -i -E "s|Discover and review [0-9,]+\+? bottles|Discover and review ${NEW_COUNT}+ bottles|g" index.html
+
+      - name: Commit & push deploy repo
+        run: |
+          cd deploy
+          git config user.name  "thecask-bot"
+          git config user.email "bot@thecaskforum.com"
+          git add index.html
+          git diff --cached --quiet || git commit -m "Bottle count updated to ${{ steps.count.outputs.formatted }}"
+          git push
